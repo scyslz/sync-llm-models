@@ -14,12 +14,28 @@ snapshot in its daemon. Syncing is therefore two steps:
 
 Both steps are scripted here. Run them from any directory.
 
+> **Important:** step 1 only rewrites the OpenCode config. Paseo caches its own
+> snapshot in the daemon, so after every sync you **must** run step 2, otherwise
+> the new models stay invisible in Paseo. A single chained command:
+>
+> ```bash
+> node scripts/sync_models.mjs && node scripts/refresh-paseo.mjs
+> ```
+>
+> If you do not use Paseo, skip step 2 entirely — `sync_models.mjs` alone is
+> enough to keep OpenCode up to date. The refresh script exits non-zero when the
+> daemon is unreachable, so guard it in scripts if needed:
+>
+> ```bash
+> node scripts/sync_models.mjs && (node scripts/refresh-paseo.mjs || true)
+> ```
+
 ## 1. Sync model lists
 
 ```bash
-python3 scripts/sync_models.py                    # every provider with options.baseURL
-python3 scripts/sync_models.py myprovider other   # only these provider IDs
-python3 scripts/sync_models.py --dry-run          # show what would change
+node scripts/sync_models.mjs                    # every provider with options.baseURL
+node scripts/sync_models.mjs myprovider other   # only these provider IDs
+node scripts/sync_models.mjs --dry-run          # show what would change
 ```
 
 Options:
@@ -116,6 +132,5 @@ Then run step 1 and step 2. To restrict which models get published, add them und
 
 ## Requirements
 
-- Python 3.9+ (standard library only)
-- Node 18+ (for the Paseo refresh)
+- Node 18+ (`@getpaseo/cli` installed for the Paseo refresh)
 - The `opencode` CLI, and/or Paseo with `@getpaseo/cli` installed

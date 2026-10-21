@@ -10,26 +10,33 @@ stale the moment the proxy adds or removes a model.
 
 ## What it does
 
-1. **`scripts/sync_models.py`** fetches `<baseURL>/models` for each provider in your
+1. **`scripts/sync_models.mjs`** fetches `<baseURL>/models` for each provider in your
    OpenCode config and rewrites `provider.<id>.models`, preserving hand-tuned
    per-model fields and filling context/output limits from the API.
 2. **`scripts/refresh-paseo.mjs`** sends `refreshProvidersSnapshot` to the local
    Paseo daemon so Paseo picks up the new list. It does not restart the daemon, so
    running agent sessions are left alone.
 
-## Quick start
+## Install
 
 ```bash
 git clone https://github.com/scyslz/sync-llm-models.git ~/.agents/skills/sync-llm-models
 cd ~/.agents/skills/sync-llm-models
-
-python3 scripts/sync_models.py --dry-run   # preview
-python3 scripts/sync_models.py             # write
-node scripts/refresh-paseo.mjs             # refresh Paseo
 ```
 
-OpenCode loads skills from `~/.agents/skills/<name>/SKILL.md`, so the clone path
-above makes `/sync-llm-models` available in a session.
+OpenCode loads skills from `~/.agents/skills/<name>/SKILL.md`, so this path makes
+`/sync-llm-models` available in a session. Requirements: Node 18+ and the
+`opencode` CLI; the Paseo refresh also needs `@getpaseo/cli` installed.
+
+## Quick start
+
+```bash
+node scripts/sync_models.mjs --dry-run   # preview
+node scripts/sync_models.mjs             # write
+node scripts/refresh-paseo.mjs           # refresh Paseo (required after every sync; skip if no Paseo)
+# or in one go (skip Paseo refresh on failure):
+# node scripts/sync_models.mjs && (node scripts/refresh-paseo.mjs || true)
+```
 
 See [SKILL.md](SKILL.md) for the full reference: flags, config templating
 (`{env:...}` / `{file:...}`), backup behaviour, and how to add a new provider.
@@ -48,8 +55,7 @@ See [SKILL.md](SKILL.md) for the full reference: flags, config templating
 
 ## Requirements
 
-- Python 3.9+ (stdlib only)
-- Node 18+ for the Paseo refresh (`@getpaseo/cli` installed)
+- Node 18+ (`@getpaseo/cli` installed for the Paseo refresh)
 - The `opencode` CLI to verify results
 
 ## License

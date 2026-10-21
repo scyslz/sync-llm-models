@@ -60,10 +60,13 @@ function candidates() {
   const list = [];
   if (process.env.PASEO_CLI_CLIENT_MODULE) list.push(process.env.PASEO_CLI_CLIENT_MODULE);
 
+  const isWin = process.platform === "win32";
+  const execOpts = { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], shell: isWin };
+
   // Ask npm where global packages live; this handles nvm/volta/asdf layouts.
   for (const cmd of ["npm", "pnpm"]) {
     try {
-      const root = execFileSync(cmd, ["root", "-g"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+      const root = execFileSync(cmd, ["root", "-g"], execOpts).trim();
       if (root) list.push(join(root, ...PKG.split("/"), "dist", "utils", "client.js"));
     } catch {
       // not installed / not on PATH
@@ -72,9 +75,10 @@ function candidates() {
 
   // Follow the `paseo` binary if it is a symlink into the package.
   try {
-    const bin = execFileSync("which", ["paseo"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    const whichCmd = isWin ? "where" : "which";
+    const bin = execFileSync(whichCmd, ["paseo"], execOpts).trim().split(/\\r?\\n/)[0];
     if (bin) {
-      const real = realpathSync(bin);
+      const real = isWin ? bin : realpathSync(bin);
       // .../<pkg>/bin/paseo  or  .../<pkg>/dist/cli.js
       list.push(join(dirname(real), "..", "dist", "utils", "client.js"));
       list.push(join(dirname(real), "dist", "utils", "client.js"));
@@ -89,6 +93,13 @@ function candidates() {
     join("/usr/lib/node_modules", ...PKG.split("/"), "dist", "utils", "client.js"),
     join("/opt/homebrew/lib/node_modules", ...PKG.split("/"), "dist", "utils", "client.js"),
   );
+  if (isWin) {
+    const appData = process.env.APPDATA || join(homedir(), "AppData", "Roaming");
+    list.push(
+      join(appData, "npm", "node_modules", ...PKG.split("/"), "dist", "utils", "client.js"),
+      join(process.env.ProgramFiles || "C:\\\\Program Files", "nodejs", "node_modules", ...PKG.split("/"), "dist", "utils", "client.js"),
+    );
+  }
   return [...new Set(list)];
 }
 
