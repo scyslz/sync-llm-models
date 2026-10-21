@@ -6,12 +6,14 @@
  *   node sync_models.mjs [provider ...] [--all] [--keep-removed] [--dry-run]
  *                        [--home DIR] [--timeout SECONDS] [--keep-backups N]
  *
- * Reads <baseURL>/models for each provider and rewrites provider.<id>.models,
- * keeping existing per-model overrides (display name, limits, cost, tool_call,
- * ...) and filling limits from the endpoint when it reports them. Updates
- * opencode.json / opencode.jsonc in place, atomically, with timestamped backups.
+ * Reads <baseURL>/models for each provider and rewrites the provider's models
+ * map, keeping existing per-model overrides (display name, limits, cost,
+ * tool_call, ...) and filling limits from the endpoint when it reports them.
+ * Understands both config layouts: provider.<id>.options (OpenCode <= v1) and
+ * providers.<id>.settings (OpenCode v2). Updates opencode.json / opencode.jsonc
+ * in place, atomically, with timestamped backups.
  *
- * With no provider arguments, every provider that has options.baseURL is synced.
+ * With no provider arguments, every provider that has a baseURL is synced.
  */
 
 import { existsSync, readFileSync, writeFileSync, renameSync, copyFileSync, readdirSync, statSync, rmSync } from "node:fs";
@@ -134,6 +136,29 @@ function findConfigs(home) {
   return configs;
 }
 
+/**
+ * OpenCode <= v1 stores providers as provider.<id> with options.baseURL/apiKey;
+ * v2 stores them as providers.<id> with settings.baseURL/apiKey. Support both.
+ */
+function providerMap(cfg) {
+  if (cfg.provider && typeof cfg.provider === "object") return cfg.provider;
+  if (cfg.providers && typeof cfg.providers === "object") return cfg.providers;
+  return {};
+}
+
+function providerOptions(prov) {
+  if (prov.options && typeof prov.options === "object") return prov.options;
+  if (prov.settings && typeof prov.settings === "object") return prov.settings;
+  return {};
+}
+
+function ensureProviderMap(cfg) {
+  if (cfg.provider && typeof cfg.provider === "object") return cfg.provider;
+  if (cfg.providers && typeof cfg.providers === "object") return cfg.providers;
+  cfg.providers = {};
+  return cfg.providers;
+}
+
 function expandUser(p) {
   if (typeof p !== "string") return p;
   if (p === "~") return homedir();
@@ -216,8 +241,12 @@ function buildModels(entries, existing, keepRemoved) {
     const output = limit.output || m.max_output_tokens;
 
     const entry = { name: displayName(mid, prev) };
-    if (context && output) entry.limit = { context, output };
-    else if (prev.limit) entry.limit = prev.limit;
+    const mergedLimit = { ...(prev.limit || {}) };
+    // Endpoint-reported limits win per field; keep previous values only for
+    // fields the endpoint does not report (plus any extra limit keys).
+    if (context !== undefined && context !== null && context !== "") mergedLimit.context = context;
+    if (output !== undefined && output !== null && output !== "") mergedLimit.output = output;
+    if (Object.keys(mergedLimit).length) entry.limit = mergedLimit;
     for (const [key, value] of Object.entries(prev)) {
       if (!(key in entry)) entry[key] = value;
     }
@@ -248,12 +277,22 @@ function summarize(oldObj, newObj) {
   const newKeys = Object.keys(newObj || {});
   const added = newKeys.filter((m) => !oldKeys.includes(m));
   const removed = oldKeys.filter((m) => !newKeys.includes(m));
+  const relimited = newKeys.filter(
+    (m) =>
+      oldKeys.includes(m) &&
+      JSON.stringify((oldObj[m] || {}).limit) !== JSON.stringify((newObj[m] || {}).limit),
+  );
   const parts = [`${newKeys.length} models`];
   if (added.length) {
     parts.push(`+${added.length} (${added.slice(0, 4).join(", ")}${added.length > 4 ? "..." : ""})`);
   }
   if (removed.length) {
     parts.push(`-${removed.length} (${removed.slice(0, 4).join(", ")}${removed.length > 4 ? "..." : ""})`);
+  }
+  if (relimited.length) {
+    parts.push(
+      `limits updated ${relimited.length} (${relimited.slice(0, 4).join(", ")}${relimited.length > 4 ? "..." : ""})`,
+    );
   }
   return parts.join(", ");
 }
@@ -306,7 +345,11 @@ async function main() {
   const configs = findConfigs(home);
   const primary = configs[0];
   const primaryConfig = loadConfig(primary);
-  const providers = primaryConfig.provider || {};
+  const providers = providerMap(primaryConfig);
+  if (!Object.keys(providers).length) {
+    console.error(`${primary}: no provider/providers block found`);
+    process.exit(1);
+  }
 
   let targets;
   if (args.all || args.providers.length === 0) {
@@ -324,7 +367,7 @@ async function main() {
       failures += 1;
       continue;
     }
-    const options = prov.options || {};
+    const options = providerOptions(prov);
     const baseUrl = expand(options.baseURL);
     if (!baseUrl) {
       console.error(`skip ${pid}: no options.baseURL`);
@@ -370,7 +413,7 @@ async function main() {
 
   for (const p of configs) {
     const cfg = p === primary ? primaryConfig : loadConfig(p);
-    const cfgProviders = cfg.provider || (cfg.provider = {});
+    const cfgProviders = ensureProviderMap(cfg);
     const indent = detectIndent(readFileSync(p, "utf8"));
     let changed = false;
     for (const [pid, models] of Object.entries(updates)) {

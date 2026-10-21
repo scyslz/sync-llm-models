@@ -11,8 +11,10 @@ stale the moment the proxy adds or removes a model.
 ## What it does
 
 1. **`scripts/sync_models.mjs`** fetches `<baseURL>/models` for each provider in your
-   OpenCode config and rewrites `provider.<id>.models`, preserving hand-tuned
-   per-model fields and filling context/output limits from the API.
+   OpenCode config and rewrites that provider's `models` map (under `provider.<id>`
+   for OpenCode ≤ v1, `providers.<id>` for v2), preserving hand-tuned per-model
+   fields and filling context/output limits from the API. Endpoints that are down
+   are skipped, leaving their config untouched.
 2. **`scripts/refresh-paseo.mjs`** sends `refreshProvidersSnapshot` to the local
    Paseo daemon so Paseo picks up the new list. It does not restart the daemon, so
    running agent sessions are left alone.
@@ -45,7 +47,11 @@ See [SKILL.md](SKILL.md) for the full reference: flags, config templating
 
 - **No hardcoded providers or secrets.** Every target comes from your own config, and
   `baseURL` / `apiKey` support OpenCode's `{env:VAR}` and `{file:path}` templates.
-- **Idempotent.** If the endpoint is unchanged, nothing is written.
+- **Idempotent.** If the endpoint is unchanged, nothing is written. Unchanged
+  limits count as unchanged, so a re-run right after a sync writes nothing.
+- **Both config layouts.** `provider.<id>.options` (OpenCode ≤ v1) and
+  `providers.<id>.settings` (v2) are read; if neither block exists the script
+  exits 1 rather than reporting "already up to date".
 - **Reversible.** Each write copies `opencode.json[.bak.<timestamp>]` first, keeping
   the most recent 5 by default.
 - **Preserves your config.** Both JSON and JSONC are handled (comments and trailing

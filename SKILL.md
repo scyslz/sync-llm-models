@@ -33,17 +33,22 @@ Both steps are scripted here. Run them from any directory.
 ## 1. Sync model lists
 
 ```bash
-node scripts/sync_models.mjs                    # every provider with options.baseURL
+node scripts/sync_models.mjs                    # every provider with a baseURL
 node scripts/sync_models.mjs myprovider other   # only these provider IDs
 node scripts/sync_models.mjs --dry-run          # show what would change
 ```
+
+The script reads both config layouts: OpenCode ≤ v1 uses `provider.<id>` with
+`options.baseURL` / `options.apiKey`, OpenCode v2 uses `providers.<id>` with
+`settings.baseURL` / `settings.apiKey` (and `package` instead of `npm`). If no
+provider block is found at all it exits 1 instead of claiming "up to date".
 
 Options:
 
 | Flag | Meaning |
 | --- | --- |
-| `provider ...` | Provider IDs as they appear under `provider` in the config. |
-| `--all` | Same as passing no IDs: sync every provider that has `options.baseURL`. |
+| `provider ...` | Provider IDs as they appear under `provider` (v1) or `providers` (v2). |
+| `--all` | Same as passing no IDs: sync every provider that has a baseURL. |
 | `--dry-run` | Print the resulting model IDs without writing anything. |
 | `--keep-removed` | Keep models the endpoint no longer lists (useful for flaky proxies). |
 | `--home DIR` | Config directory (default `~/.config/opencode`). |
@@ -53,15 +58,23 @@ Options:
 What it does:
 
 - GETs `<baseURL>/models` — a base URL already ending in `/models` is left alone —
-  adding `Authorization: Bearer <apiKey>` when the provider has `options.apiKey`.
+  adding `Authorization: Bearer <apiKey>` when the provider has `options.apiKey`
+  or `settings.apiKey`.
 - Resolves `{env:VAR}`, `{file:path}`, `$VAR` and `${VAR}` in `baseURL` / `apiKey`
   the way OpenCode does, so no secrets need to be literal in the config.
-- Rebuilds `provider.<id>.models` in API order, keeping any existing per-model
-  overrides (`name`, `limit`, `cost`, `tool_call`, `attachment`, `reasoning`, ...).
+- Rebuilds the provider's `models` map in API order, keeping any existing per-model
+  overrides (`name`, `cost`, `tool_call`, `attachment`, `reasoning`, ...).
   A model without a `name` gets its ID minus the vendor prefix
   (`cn:glm-5.3` → `glm-5.3`).
 - Fills `limit.context` / `limit.output` from `limit.*`, `context_length`,
   `context_window` or `max_output_tokens` when the endpoint reports them.
+  The endpoint wins **per field**: a reported context replaces the stored one
+  even when the endpoint reports no output limit (the previous value is kept
+  only for fields the endpoint omits). The run summary prints
+  `limits updated N (...)` so limit-only changes are visible.
+- An endpoint that is down or unreachable is **skipped**, leaving that provider's
+  config untouched (failures are reported on stderr; the run still succeeds for
+  the providers that did sync).
 - Updates every config file found (`jsonc` first, then `json`) in place, preserving
   each file's indentation style, writing atomically, and saving a timestamped
   `*.bak.<stamp>` before each write.
@@ -108,16 +121,17 @@ opencode run -m myprovider/<model-id> "Reply with exactly: OK"
 
 ## Adding a new compatible provider
 
-Add it under `provider` in `~/.config/opencode/opencode.json` (and `.jsonc` if you
-keep both):
+Add it under `providers` in `~/.config/opencode/opencode.json` (and `.jsonc` if you
+keep both). This is the OpenCode v2 shape; the older `provider` + `options`/`npm`
+shape is understood by the script too:
 
 ```jsonc
 {
-  "provider": {
+  "providers": {
     "myprovider": {
-      "npm": "@ai-sdk/openai-compatible",
+      "package": "@ai-sdk/openai-compatible",
       "name": "My Provider",
-      "options": {
+      "settings": {
         "baseURL": "https://api.example.com/v1",
         "apiKey": "{env:MY_PROVIDER_API_KEY}"
       }
@@ -127,8 +141,10 @@ keep both):
 }
 ```
 
-Then run step 1 and step 2. To restrict which models get published, add them under
-`models` with a `name` first — the script keeps and extends that map.
+Then run step 1 and step 2. The endpoint's model list is the source of truth: every
+model it returns is added to `models`, and models it no longer returns are dropped
+unless you pass `--keep-removed`. There is no per-provider allowlist — to publish
+fewer models, point the provider at an endpoint that serves fewer.
 
 ## Requirements
 
