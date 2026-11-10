@@ -58,6 +58,9 @@ See [SKILL.md](SKILL.md) for the full reference: flags, config templating
   commas are tolerated on read), indentation is detected per file, and unknown keys
   are never dropped.
 - **No daemon restart.** Paseo gets an in-place refresh, so live agents survive.
+- **Cannot hang.** Daemon connect and the refresh RPC each have a hard timeout
+  (`--timeout`, 60s default) plus optional retries, so a busy daemon fails loudly
+  instead of blocking the sync.
 
 ## Requirements
 

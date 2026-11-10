@@ -101,17 +101,20 @@ paseo provider models opencode | grep myprovider
 
 Options: `--providers opencode,pi` (comma separated), `--home <paseo-home>`,
 `--cwd <dir>` (also refresh that workspace's snapshot), `--retries N`,
-`--verbose` (show every client-module path it tried).
+`--timeout SECS` (per RPC, default 60), `--verbose` (show every client-module path
+it tried).
 
 The script locates the daemon client inside the installed `@getpaseo/cli` package by
 asking `npm root -g`, following the `paseo` binary, then trying well-known global
 paths. If it still cannot find it, set `PASEO_CLI_CLIENT_MODULE` to that package's
 `dist/utils/client.js`.
 
-The first liveness check after a daemon wake-up can time out. Retry with
-`--retries 3`. If the daemon stays unreachable, use the refresh action in the Paseo
-app — do **not** run `paseo daemon restart` while an agent session is live, because
-that kills every session.
+The first liveness check after a daemon wake-up can time out, and a busy daemon can
+stall the RPC. Every connect and RPC has a hard `--timeout` (60s by default), so the
+script fails with a clear message instead of hanging; retry with `--retries 3`. If the
+daemon stays unreachable, use the refresh action in the Paseo app — do **not** run
+`paseo daemon restart` while an agent session is live, because that kills every
+session.
 
 ## 3. End-to-end smoke test
 

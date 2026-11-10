@@ -4,7 +4,7 @@
  *
  * Usage:
  *   node refresh-paseo.mjs [--providers opencode,pi] [--home ~/.paseo]
- *                          [--cwd DIR] [--retries N] [--verbose]
+ *                          [--cwd DIR] [--retries N] [--timeout SECONDS] [--verbose]
  *
  * Paseo has no model list of its own: it reads the OpenCode config and caches a
  * provider snapshot in its daemon. This connects to the local daemon over its
@@ -24,6 +24,7 @@ import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const PKG = "@getpaseo/cli";
+const DEFAULT_TIMEOUT_S = 60;
 
 function parseArgs(argv) {
   const out = {
@@ -31,6 +32,7 @@ function parseArgs(argv) {
     home: join(homedir(), ".paseo"),
     cwd: undefined,
     retries: 1,
+    timeoutMs: DEFAULT_TIMEOUT_S * 1000,
     verbose: false,
   };
   const tilde = (v) => v.replace(/^~(?=$|\/)/, homedir());
@@ -45,10 +47,12 @@ function parseArgs(argv) {
     else if (arg === "--home") out.home = tilde(next());
     else if (arg === "--cwd") out.cwd = tilde(next());
     else if (arg === "--retries") out.retries = Math.max(1, Number(next()) || 1);
+    else if (arg === "--timeout") out.timeoutMs = Math.max(1, Number(next()) || DEFAULT_TIMEOUT_S) * 1000;
     else if (arg === "--verbose" || arg === "-v") out.verbose = true;
     else if (arg === "--help" || arg === "-h") {
       console.log(
-        "Usage: node refresh-paseo.mjs [--providers opencode,pi] [--home ~/.paseo] [--cwd DIR] [--retries N] [--verbose]",
+        "Usage: node refresh-paseo.mjs [--providers opencode,pi] [--home ~/.paseo] [--cwd DIR] " +
+          `[--retries N] [--timeout SECONDS] [--verbose] (default timeout: ${DEFAULT_TIMEOUT_S}s)`,
       );
       process.exit(0);
     } else throw new Error(`unknown argument: ${arg}`);
@@ -114,6 +118,15 @@ function resolveClientModule(verbose) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/** Reject after `ms`, so a wedged daemon RPC fails instead of hanging forever. */
+function withDeadline(promise, ms, label) {
+  let timer;
+  const deadline = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms / 1000}s`)), ms);
+  });
+  return Promise.race([promise, deadline]).finally(() => clearTimeout(timer));
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const modulePath = resolveClientModule(args.verbose);
@@ -122,15 +135,23 @@ async function main() {
   }
 
   const { connectToDaemon } = await import(pathToFileURL(modulePath).href);
-  const client = await connectToDaemon({ target: { kind: "home", home: args.home } });
+  const client = await withDeadline(
+    connectToDaemon({ target: { kind: "home", home: args.home }, timeout: args.timeoutMs }),
+    args.timeoutMs,
+    "daemon connect",
+  );
   try {
     let lastError;
     for (let attempt = 1; attempt <= args.retries; attempt += 1) {
       try {
-        const result = await client.refreshProvidersSnapshot({
-          providers: args.providers,
-          ...(args.cwd ? { cwd: args.cwd } : {}),
-        });
+        const result = await withDeadline(
+          client.refreshProvidersSnapshot({
+            providers: args.providers,
+            ...(args.cwd ? { cwd: args.cwd } : {}),
+          }),
+          args.timeoutMs,
+          "refreshProvidersSnapshot",
+        );
         console.log(`refreshed ${args.providers.join(",")}: ${JSON.stringify(result)}`);
         return;
       } catch (error) {
@@ -152,7 +173,7 @@ main().catch((error) => {
   console.error(`refresh failed: ${error instanceof Error ? error.message : error}`);
   console.error(
     "If the daemon is unreachable, use the Paseo app's refresh action instead of restarting " +
-      "(a restart kills live agent sessions). Try --retries 3 --verbose to diagnose.",
+      "(a restart kills live agent sessions). Try --retries 3 --verbose --timeout 120 to diagnose.",
   );
   process.exit(1);
 });
